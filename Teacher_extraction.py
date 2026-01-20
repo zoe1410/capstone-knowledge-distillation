@@ -2,37 +2,40 @@ import torch
 import timm
 import torch.nn.functional as F
 import math
-
+import torch.nn as nn
+class CustomHead(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.classifier = nn.Sequential(
+            nn.Linear(768, 256),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(256, 128),
+            nn.GELU(),
+            nn.Dropout(0.3),
+            nn.Linear(128, 5),
+        )
+    def forward(self, x):
+        return self.classifier(x)
 
 class TeacherExtractor:
     def __init__(self, model_name="vit_base_patch16_224", pretrained=False,checkpoint_path=None):
         self.model = timm.create_model(model_name, pretrained=pretrained)
+        self.model.head = CustomHead()
         # Load checkpoint nếu có
         if checkpoint_path:
             checkpoint = torch.load(checkpoint_path, map_location='cpu')
+            # Xử lý các trường hợp checkpoint khác nhau
             if 'model_state_dict' in checkpoint:
-                state_dict = checkpoint['model_state_dict']
-            elif 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
+                self.model.load_state_dict(checkpoint['model_state_dict'],strict=True)
 
-            # Lọc bỏ các key liên quan đến head/classifier
-            filtered_state_dict = {k: v for k, v in state_dict.items() if not k.startswith('head') and not k.startswith('classifier')}
-            missing, unexpected = self.model.load_state_dict(filtered_state_dict, strict=False)
-            print("Missing keys:", missing)
-            print("Unexpected keys:", unexpected)
         self.model.eval()
-        self.cache = {
-            "block_outs": []
-        }
+        self.cache = {"block_outs": [], "logits": None}
+
         # ===== ĐÓNG BĂNG ViT =====
         for param in self.model.parameters():
             param.requires_grad = False
-        
-
+    
         self.hooks = []
     def _hook_block_multi(self, module, input, output):
         self.cache["block_outs"].append(output.detach())
@@ -40,16 +43,22 @@ class TeacherExtractor:
     def _hook_qkv(self, module, input, output):
         # output: [B, 197, 2304]
         self.cache["qkv_out"] = output.detach()
+
+    def _hook_logits(self, module, input, output):
+        self.cache["logits"] = output.detach()
+
     def _register_hooks(self):
-        h_qkv = self.model.blocks[7].attn.qkv.register_forward_hook(self._hook_qkv)
-    
-        block_ids = [7]
-        block_hooks = []
+        h_qkv = self.model.blocks[11].attn.qkv.register_forward_hook(self._hook_qkv) ## Cái này để lấy QKV từ block 11
+        self.hooks.append(h_qkv)
+
+        h_logits = self.model.head.register_forward_hook(self._hook_logits) ## Cái này để lấy logits
+        self.hooks.append(h_logits)
+        
+        block_ids = [7] # Lấy output từ các block này
         for i in block_ids:
             h = self.model.blocks[i].register_forward_hook(self._hook_block_multi)
-            block_hooks.append(h)
-    
-        self.hooks = [h_qkv] + block_hooks
+            self.hooks.append(h)
+
     # ---- hook Transformer Block output ---- ( đang lấy block 11)
     def _remove_hooks(self):
         # cleanup hooks (rất quan trọng)
@@ -68,19 +77,18 @@ class TeacherExtractor:
             dict với các key: Q_t, K_t, V_t, Attn_t, block11_out
         """
         self.cache["block_outs"].clear()
+        self.cache["logits"] = None
         self._register_hooks()
         
         # ===== forward teacher =====
         with torch.no_grad():
             _ = self.model(x)
-        
+        # ==== get logits =====    
+        logits = self.cache["logits"]
         # ===== retrieve outputs =====
         qkv_out = self.cache["qkv_out"]          # [B, 197, 2304]
         block_outs = self.cache["block_outs"]   # list length = 5
-        # [5, B, 197, 768]
-        # block_stack = torch.stack(block_outs, dim=0)
-        # # mean theo block
-        # block_mean = block_stack.mean(dim=0)    # [B,197,768]
+
         # ===== split Q K V =====
         Q = qkv_out[:, :, 0:768]
         K = qkv_out[:, :, 768:1536]
@@ -89,10 +97,13 @@ class TeacherExtractor:
         Q_t = Q[:, 1:, :] 
         K_t = K[:, 1:, :] 
         V_t = V[:, 1:, :] 
+
+        # [5, B, 197, 768]
+        # block_stack = torch.stack(block_outs, dim=0)
+        # # mean theo block
+        # block_mean = block_stack.mean(dim=0)    # [B,197,768]
         # add CLS token
-        block_out = block_outs[0]  # Lấy output của block 11
-        cls_token = block_out[:, 0, :]
-        block_mean = block_out[:, 1:, :]
+        block_mean = block_outs[0][:, 1:, :] #Nếu chỉ lấy output 1 block thì sẽ block_mean =block_outs[0]
         
         # Tính attention map để bỏ vào hàm loss
         d = Q_t.shape[-1]  # 768
@@ -108,7 +119,7 @@ class TeacherExtractor:
             "V_t": V_t,
             "Attn_t": Attn_t,
             "block_mean": block_mean,
-            "cls_token": cls_token
+            "logits": logits
         }
     
     def to(self, device):
@@ -127,5 +138,6 @@ if __name__ == "__main__":
     print("Q teacher:", outputs["Q_t"].shape)
     print("K teacher:", outputs["K_t"].shape)
     print("V teacher:", outputs["V_t"].shape)
-    print("Block11:", outputs["block11_out"].shape)
+    print("Block11:", outputs["block_mean"].shape)
     print("Attention teacher:", outputs["Attn_t"].shape)  # [B, 196, 768]
+    print("Logits:", outputs["logits"].shape)
