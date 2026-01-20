@@ -1,36 +1,6 @@
-# Ignore Python and text files on main branch
-*.py
-*.txt
+# Ignore all .pth files everywhere in the repo
+*.pth
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-
-# Dataset
-MorningaLeaf_Dataset/
-TomatoDataset/
-dataset/
-*.zip
-
-# Results
+# Ignore the checkpoints directory (optional, if you want to ignore all its contents)
 checkpoints/
-results/
-
-# Document
-Document/
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
+*.pth
