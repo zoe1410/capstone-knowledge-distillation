@@ -99,11 +99,14 @@ class TeacherExtractor:
         V_t = V[:, 1:, :] 
 
         # [5, B, 197, 768]
-        # block_stack = torch.stack(block_outs, dim=0)
-        # # mean theo block
-        # block_mean = block_stack.mean(dim=0)    # [B,197,768]
-        # add CLS token
-        block_mean = block_outs[0][:, 1:, :] #Nếu chỉ lấy output 1 block thì sẽ block_mean =block_outs[0]
+
+        #Trung bình các outputs của nhiều transformer block ( thì chạy code này ) 
+        block_stack = torch.stack(block_outs, dim=0)
+        block_mean = block_stack.mean(dim=0)    # [B,197,768]
+
+        #Lấy output của 1 transformer block (thì chạy code này)
+        block_mean = block_outs[0][:, 1:, :]
+        
         
         # Tính attention map để bỏ vào hàm loss
         d = Q_t.shape[-1]  # 768
