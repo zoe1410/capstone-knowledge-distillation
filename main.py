@@ -49,33 +49,6 @@ class StudentWithHead(nn.Module):
         logits = self.classifier(pooled)  # [B, num_classes]
         
         return feat_map, logits
-class TeacherHead(nn.Module):
-    """
-    Trainable classification head cho Teacher (ViT)
-    Input: CLS token [B, 768] từ frozen ViT backbone
-    Output: logits [B, num_classes]
-    """
-    def __init__(self, num_classes, embed_dim=768):
-        super().__init__()
-        self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, 256),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes)
-        )
-    
-    def forward(self, cls_token):
-        """
-        Args:
-            cls_token: [B, 768] - CLS token từ ViT
-        Returns:
-            logits: [B, num_classes]
-        """
-        return self.classifier(cls_token)
-
 class DistillationPipeline:
     def __init__(
         self,
@@ -84,10 +57,10 @@ class DistillationPipeline:
         batch_size=32,
         num_workers=4,
         lr_student=1e-4,
-        lr_teacher=1e-4,
+        # lr_teacher=1e-4,
         epochs=120,
         warmup_epochs_student=5,
-        warmup_epochs_teacher=5,
+        # warmup_epochs_teacher=5,
         device="cuda",
         save_dir="checkpoints",
         lambda1=1.0,  # weight for L_proj1 (PCA loss)
@@ -95,23 +68,23 @@ class DistillationPipeline:
         lambda3=1.0,  # weight for L_logits (Hinton loss)
         patience=15,  # early stopping patience
         start_factor_student=1e-8,
-        start_factor_teacher=1e-8,  # warmup start factor
+        # start_factor_teacher=1e-8,  # warmup start factor
         eta_min_student=1e-7,
-        eta_min_teacher=1e-7,  # cosine annealing min lr
+        # eta_min_teacher=1e-7,  # cosine annealing min lr  
     ):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
         self.epochs = epochs
         self.warmup_epochs_student = warmup_epochs_student
-        self.warmup_epochs_teacher = warmup_epochs_teacher
+        # self.warmup_epochs_teacher = warmup_epochs_teacher
         self.save_dir = save_dir
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.lambda3 = lambda3
         self.patience = patience
         self.start_factor_student = start_factor_student
-        self.start_factor_teacher = start_factor_teacher
+        # self.start_factor_teacher = start_factor_teacher
         self.eta_min_student = eta_min_student
-        self.eta_min_teacher = eta_min_teacher
+        # self.eta_min_teacher = eta_min_teacher
         
         os.makedirs(save_dir, exist_ok=True)
         
@@ -142,10 +115,10 @@ class DistillationPipeline:
         self.student = self.student.to(self.device)
         print("✅ Student (ResNet-50) loaded")
         
-        # Teacher Head (trainable)
-        self.teacher_head = TeacherHead(num_classes=num_classes, embed_dim=768)
-        self.teacher_head = self.teacher_head.to(self.device)
-        print("✅ Teacher Head (trainable) loaded")
+        # # Teacher Head (trainable)
+        # self.teacher_head = TeacherHead(num_classes=num_classes, embed_dim=768)
+        # self.teacher_head = self.teacher_head.to(self.device)
+        # print("✅ Teacher Head (trainable) loaded")
         
         # Projectors
         self.pca_projector = PCAttentionProjector(in_channels=96, embed_dim=768)
@@ -164,11 +137,11 @@ class DistillationPipeline:
         trainable_params = list(self.student.parameters()) + \
                           list(self.pca_projector.parameters()) + \
                           list(self.gl_projector.parameters())
-        self.optimizer_teacher = optim.Adam(self.teacher_head.parameters(), lr=lr_teacher)
+        # self.optimizer_teacher = optim.Adam(self.teacher_head.parameters(), lr=lr_teacher)
         self.optimizer_student = optim.Adam(trainable_params, lr=lr_student)
         
         # ===== Scheduler: Linear warmup + Cosine Annealing (epoch-level) =====
-        self.scheduler_student, self.scheduler_teacher = self._get_scheduler()
+        self.scheduler_student = self._get_scheduler()
         
         print(f"\n✅ Pipeline initialized on {self.device}")
     
@@ -179,8 +152,8 @@ class DistillationPipeline:
         """
         warmup_epochs_student = self.warmup_epochs_student
         cosine_epochs_student = self.epochs - self.warmup_epochs_student
-        warmup_epochs_teacher = self.warmup_epochs_teacher
-        cosine_epochs_teacher = self.epochs - self.warmup_epochs_teacher
+        # warmup_epochs_teacher = self.warmup_epochs_teacher
+        # cosine_epochs_teacher = self.epochs - self.warmup_epochs_teacher 
     
         # ===== SCHEDULER CHO STUDENT =====
         warmup_scheduler_student = LinearLR(
@@ -202,38 +175,38 @@ class DistillationPipeline:
             milestones=[warmup_epochs_student]
         )
         
-        # ===== SCHEDULER CHO TEACHER HEAD =====
-        warmup_scheduler_teacher = LinearLR(
-            self.optimizer_teacher,
-            start_factor=self.start_factor_teacher,
-            end_factor=1.0,
-            total_iters=self.warmup_epochs_teacher
-        )
+        # # ===== SCHEDULER CHO TEACHER HEAD =====
+        # warmup_scheduler_teacher = LinearLR(
+        #     self.optimizer_teacher,
+        #     start_factor=self.start_factor_teacher,
+        #     end_factor=1.0,
+        #     total_iters=self.warmup_epochs_teacher
+        # )
         
-        cosine_scheduler_teacher = CosineAnnealingLR(
-            self.optimizer_teacher,
-            T_max=cosine_epochs_teacher,
-            eta_min=self.eta_min_teacher
-        )
+        # cosine_scheduler_teacher = CosineAnnealingLR(
+        #     self.optimizer_teacher,
+        #     T_max=cosine_epochs_teacher,
+        #     eta_min=self.eta_min_teacher
+        # )
         
-        scheduler_teacher = SequentialLR(
-            self.optimizer_teacher,
-            schedulers=[warmup_scheduler_teacher, cosine_scheduler_teacher],
-            milestones=[warmup_epochs_teacher]
-        )
+        # scheduler_teacher = SequentialLR(
+        #     self.optimizer_teacher,
+        #     schedulers=[warmup_scheduler_teacher, cosine_scheduler_teacher],
+        #     milestones=[warmup_epochs_teacher]
+        # )
         
-        return scheduler_student, scheduler_teacher
+        return scheduler_student
     
     def train_one_epoch(self, epoch):
         """Train for one epoch"""
         self.student.train()
         self.pca_projector.train()
         self.gl_projector.train()
-        self.teacher_head.train()  # ← Teacher head cũng train!
+        # self.teacher_head.train()  # ← Teacher head cũng train!
         total_loss = 0.0
         total_kd_loss = 0.0
         total_ce_loss_s = 0.0
-        total_ce_loss_t = 0.0
+        # total_ce_loss_t = 0.0
         correct = 0
         total = 0
         
@@ -250,12 +223,11 @@ class DistillationPipeline:
             V_t = teacher_out["V_t"]
             Attn_t = teacher_out["Attn_t"]
             h_t = teacher_out["block_mean"]  # [B, 196, 768]
-            cls_token_t = teacher_out["cls_token"]
+            logit_t = teacher_out["logits"] 
             
             # ===== Student forward =====
             feat_map, logit_s = self.student(images)  # [B, 1024, 14, 14], [B, num_classes]
             # ===== Teacher Head forward (để lấy teacher logits) =====
-            logit_t = self.teacher_head(cls_token_t)  # [B, num_classes]
             
             # ===== PCA Projector =====
             pca_out = self.pca_projector(feat_map, Q_t, K_t, V_t)
@@ -268,7 +240,7 @@ class DistillationPipeline:
             # ===== Calculate losses =====
             l_proj1, l_proj2 = self.kd_loss_fn(Attn_t, PCAttn_s, V_t, V_s, h_t, h_s_proj)
             ce_loss_s = self.ce_loss_fn(logit_s, labels)
-            ce_loss_t = self.ce_loss_fn(logit_t, labels)
+            # ce_loss_t = self.ce_loss_fn(logit_t, labels) 
             # ===== NEW: Logits Loss (Hinton) ====
 
             logits_kd_loss = self.logits_loss(logit_s, logit_t.detach())
@@ -276,17 +248,17 @@ class DistillationPipeline:
             # Loss cho STUDENT (KHÔNG có ce_loss_teacher!)(Offline learning)
             loss_student = ce_loss_s + self.lambda1 * l_proj1 + self.lambda2 * l_proj2 + self.lambda3 * logits_kd_loss
             # Loss cho TEACHER HEAD (chỉ CE)
-            loss_teacher = ce_loss_t
+            # loss_teacher = ce_loss_t
 
             # ===== BACKWARD RIÊNG CHO STUDENT TRƯỚC =====
             self.optimizer_student.zero_grad()
             loss_student.backward()  # ← STUDENT TRƯỚC (thêm retain_graph=True)
             self.optimizer_student.step()
 
-            # ===== BACKWARD RIÊNG CHO TEACHER SAU =====
-            self.optimizer_teacher.zero_grad()
-            loss_teacher.backward()  # ← TEACHER SAU (bỏ retain_graph=True)
-            self.optimizer_teacher.step()
+            # # ===== BACKWARD RIÊNG CHO TEACHER SAU =====
+            # self.optimizer_teacher.zero_grad()
+            # loss_teacher.backward()  # ← TEACHER SAU (bỏ retain_graph=True)
+            # self.optimizer_teacher.step()
 
             # ===== Metrics =====
             total_loss += loss_student.item()
@@ -300,12 +272,12 @@ class DistillationPipeline:
             # Update progress bar
             pbar.set_postfix({
                 "Loss_S": f"{loss_student.item():.4f}",
-                "Loss_T": f"{loss_teacher.item():.4f}",
+                # "Loss_T": f"{loss_teacher.item():.4f}",
                 "KD": f"{(l_proj1.item() + l_proj2.item()):.4f}",
                 "CE": f"{ce_loss_s.item():.4f}",
                 "Acc": f"{100.*correct/total:.2f}%",
                 "LR_S": f"{self.scheduler_student.get_last_lr()[0]:.6f}",
-                "LR_T": f"{self.scheduler_teacher.get_last_lr()[0]:.6f}"
+                # "LR_T": f"{self.scheduler_teacher.get_last_lr()[0]:.6f}"
             })
         
         avg_loss = total_loss / len(self.train_loader)
@@ -423,14 +395,14 @@ class DistillationPipeline:
             
             # Get current LR (before step)
             current_lr_student = self.scheduler_student.get_last_lr()[0]
-            current_lr_teacher = self.scheduler_teacher.get_last_lr()[0]
+            # current_lr_teacher = self.scheduler_teacher.get_last_lr()[0]
             
             # Step scheduler (epoch-level)
             self.scheduler_student.step()
-            self.scheduler_teacher.step()
+            # self.scheduler_teacher.step()
             
             # Print epoch summary
-            print(f"\n📊 Epoch {epoch+1}/{self.epochs} Summary (LR_S: {current_lr_student:.6f}, LR_T: {current_lr_teacher:.6f}):")
+            print(f"\n📊 Epoch {epoch+1}/{self.epochs} Summary (LR_S: {current_lr_student:.6f}")
             print(f"   Train - Loss: {train_metrics['loss']:.4f}, "
                   f"KD: {train_metrics['kd_loss']:.4f}, "
                   f"CE: {train_metrics['ce_loss_s']:.4f}, "
@@ -492,11 +464,11 @@ if __name__ == "__main__":
         "start_factor_student": 0.01,
         "eta_min_student": 1e-5,
         
-        # ===== TEACHER HEAD CONFIG (riêng biệt) =====
-        "lr_teacher": 8e-5,  # ← LR cao hơn cho teacher head
-        "warmup_epochs_teacher": int(0.01 * 100),  # 5 epochs (ngắn hơn)
-        "start_factor_teacher": 0.01,  # ← Start cao hơn
-        "eta_min_teacher": 1e-8,  # ← Min LR cao hơn
+        # # ===== TEACHER HEAD CONFIG (riêng biệt) =====
+        # "lr_teacher": 8e-5,  # ← LR cao hơn cho teacher head
+        # "warmup_epochs_teacher": int(0.01 * 100),  # 5 epochs (ngắn hơn)
+        # "start_factor_teacher": 0.01,  # ← Start cao hơn
+        # "eta_min_teacher": 1e-8,  # ← Min LR cao hơn
         
         # ===== COMMON =====
         "device": "cuda",
@@ -509,4 +481,3 @@ if __name__ == "__main__":
     
     pipeline = DistillationPipeline(**config)
     pipeline.train()
-
