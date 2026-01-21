@@ -5,6 +5,7 @@ from torchvision.datasets import ImageFolder
 from sklearn.model_selection import train_test_split
 import numpy as np
 import random
+import os
 
 # =========================
 # GLOBAL SEED FUNCTION
@@ -14,29 +15,29 @@ def set_seed(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    
+    # Deterministic settings
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    
+    # Chỉ bật nếu CUDA hỗ trợ
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception:
+        pass
+
 # =========================
 # WORKER SEED FUNCTION
 # =========================
 def worker_init_fn(worker_id):
-    seed = torch.initial_seed() % 2**32
-    np.random.seed(seed)
-    random.seed(seed)
+    worker_seed = torch.initial_seed() % 2**32
+    np.random.seed(worker_seed)
+    random.seed(worker_seed)
+
 class DatasetHandler:
     """
     Handle dataset loading, augmentation, and splitting (70/15/15)
-    
-    Data structure:
-        root/
-            class1/
-                img1.jpg
-                img2.jpg
-                ...
-            class2/
-                img1.jpg
-                ...
     """
     
     def __init__(
@@ -58,8 +59,13 @@ class DatasetHandler:
         self.val_ratio = val_ratio
         self.test_ratio = test_ratio
         self.random_seed = random_seed
+        
         # ===== SET GLOBAL SEED =====
         set_seed(self.random_seed)
+        
+        # Cache split indices để đảm bảo consistency
+        self._cached_indices = None
+        
         # Augmentation transforms
         self.train_transform = transforms.Compose([
             transforms.Resize((image_size, image_size)),
@@ -97,6 +103,13 @@ class DatasetHandler:
         Split dataset indices into train/val/test (70/15/15)
         Stratified split to maintain class balance
         """
+        # Sử dụng cache để đảm bảo consistency
+        if self._cached_indices is not None:
+            return self._cached_indices
+        
+        # Reset seed trước khi split
+        set_seed(self.random_seed)
+        
         targets = np.array(dataset.targets)
         indices = np.arange(len(dataset))
         
@@ -118,6 +131,9 @@ class DatasetHandler:
             stratify=temp_targets,
             random_state=self.random_seed
         )
+        
+        # Cache indices
+        self._cached_indices = (train_indices, val_indices, test_indices)
         
         return train_indices, val_indices, test_indices
     
@@ -149,13 +165,20 @@ class DatasetHandler:
         """
         train_subset, val_subset, test_subset = self.get_datasets()
         
+        # Generator cho reproducibility
+        g = torch.Generator()
+        g.manual_seed(self.random_seed)
+
         train_loader = DataLoader(
             train_subset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
-            worker_init_fn=worker_init_fn
+            worker_init_fn=worker_init_fn,
+            generator=g,  # ← QUAN TRỌNG
+            drop_last=False,
+            persistent_workers=True if self.num_workers > 0 else False
         )
         
         val_loader = DataLoader(
@@ -164,7 +187,9 @@ class DatasetHandler:
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            worker_init_fn=worker_init_fn
+            worker_init_fn=worker_init_fn,
+            drop_last=False,
+            persistent_workers=True if self.num_workers > 0 else False
         )
         
         test_loader = DataLoader(
@@ -173,7 +198,9 @@ class DatasetHandler:
             shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
-            worker_init_fn=worker_init_fn
+            worker_init_fn=worker_init_fn,
+            drop_last=False,
+            persistent_workers=True if self.num_workers > 0 else False
         )
         
         return train_loader, val_loader, test_loader
@@ -190,8 +217,27 @@ class DatasetHandler:
         Returns number of classes
         """
         return len(self.get_class_names())
-
-
+    
+    def verify_split_consistency(self):
+        """
+        Verify that split is consistent across multiple calls
+        """
+        # Get indices twice
+        full_dataset = ImageFolder(root=self.root_dir)
+        
+        self._cached_indices = None
+        train1, val1, test1 = self._split_indices(full_dataset)
+        
+        self._cached_indices = None
+        train2, val2, test2 = self._split_indices(full_dataset)
+        
+        print(f"Train consistent: {np.array_equal(train1, train2)}")
+        print(f"Val consistent: {np.array_equal(val1, val2)}")
+        print(f"Test consistent: {np.array_equal(test1, test2)}")
+        print(f"Test indices (first 10): {test1[:10]}")
+        
+        return np.array_equal(test1, test2)
+    
 # ===== Test =====
 if __name__ == "__main__":
     # Example usage
