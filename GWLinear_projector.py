@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 class GWLinearProjector(nn.Module):
-    def __init__(self, in_dim=96, out_dim=768, drop_p=0.1):
+    def __init__(self, in_dim=96, out_dim=768, drop_p=0.4):
         super().__init__()
 
         # 4 shared linear layers (one per group)
@@ -14,7 +14,7 @@ class GWLinearProjector(nn.Module):
         ])
 
         self.dropout = nn.Dropout(drop_p)
-
+        self.ln = nn.LayerNorm(768)
     def forward(self, h_s):
         """
         h_s: [B, 1024, 14, 14] or [B, 196, 1024]
@@ -45,6 +45,7 @@ class GWLinearProjector(nn.Module):
         # Group 3
         g3 = h_s[:, 7:14, 7:14, :].reshape(B, -1, 96)
         out[:, 7:14, 7:14, :] = self.group_fc[3](self.dropout(g3)).view(B, 7, 7, 768)
-
-        return out.view(B, 196, 768)
+        out = out.view(B, 196, 768)
+        out = self.ln(out)
+        return out
 
