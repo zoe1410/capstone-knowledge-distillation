@@ -1,5 +1,4 @@
 import os
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,6 +14,11 @@ from GWLinear_projector import GWLinearProjector
 from loss_functions import TotalKDLoss, LogitsKDLoss
 from dataset import DatasetHandler
 torch.use_deterministic_algorithms(True)
+
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+
+
 class StudentWithHead(nn.Module):
     """
     Student model với classification head
@@ -26,13 +30,13 @@ class StudentWithHead(nn.Module):
         # Classification head: Global Average Pooling + MLP (1024 -> 256 -> 128 -> num_classes)
         self.gap = nn.AdaptiveAvgPool2d(1)
         self.classifier = nn.Sequential(
-            nn.Linear(96, 256),
+            nn.Linear(96, 512),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
+            nn.Dropout(0.7),
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, num_classes)
+            nn.Dropout(0.7),
+            nn.Linear(256, num_classes)
         )
     
     def forward(self, x):
@@ -55,7 +59,7 @@ class DistillationPipeline:
         data_dir,
         num_classes,
         batch_size=32,
-        num_workers=4,
+        num_workers=16,
         lr_student=1e-4,
         # lr_teacher=1e-4,
         epochs=120,
@@ -70,6 +74,9 @@ class DistillationPipeline:
         start_factor_student=1e-8,
         # start_factor_teacher=1e-8,  # warmup start factor
         eta_min_student=1e-7,
+        block_ids=[11,10,9,8,7],
+        block_qkv_id=11,
+        temperature=4.0
         # eta_min_teacher=1e-7,  # cosine annealing min lr  
     ):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -80,12 +87,12 @@ class DistillationPipeline:
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.lambda3 = lambda3
+        self.temperature = temperature
         self.patience = patience
         self.start_factor_student = start_factor_student
         # self.start_factor_teacher = start_factor_teacher
         self.eta_min_student = eta_min_student
-        # self.eta_min_teacher = eta_min_teacher
-        
+        # self.eta_min_teacher = eta_min_teacher,
         os.makedirs(save_dir, exist_ok=True)
         
         # ===== Dataset =====
@@ -106,7 +113,10 @@ class DistillationPipeline:
         print("\nInitializing models...")
         
         # Teacher (frozen, inference only)
-        self.teacher = TeacherExtractor(pretrained=False,checkpoint_path=r"./ViTBase-Resnet50Code_AddLogits_Completed_Ver1_MobileNet85,13/strategy_2_top_k3_avg.pth")
+        self.teacher = TeacherExtractor(pretrained=False,
+                                        checkpoint_path=r"./Capstone_KD-Burmese/results/ViT-88.46/vit_base_patch16_224/saved_checkpoints/strategy2_top_3_averaged.pth",
+                                        block_ids=block_ids,
+                                        block_qkv_id=block_qkv_id)
         self.teacher.to(self.device)
         print("✅ Teacher (ViT-B/16) loaded and frozen")
         
@@ -131,14 +141,14 @@ class DistillationPipeline:
         
         # ===== Loss functions =====
         self.kd_loss_fn = TotalKDLoss()
-        self.ce_loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
-        self.logits_loss = LogitsKDLoss(temperature=4.0)
+        self.ce_loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1,)
+        self.logits_loss = LogitsKDLoss(temperature=temperature)
         # ===== Optimizer (chỉ train student + projectors) =====
-        trainable_params = list(self.student.parameters()) + \
+        trainable_params = list(self.student.parameters())    + \
                           list(self.pca_projector.parameters()) + \
                           list(self.gl_projector.parameters())
         # self.optimizer_teacher = optim.Adam(self.teacher_head.parameters(), lr=lr_teacher)
-        self.optimizer_student = optim.Adam(trainable_params, lr=lr_student)
+        self.optimizer_student = optim.Adam(trainable_params, lr=lr_student,weight_decay= 1e-7)
         
         # ===== Scheduler: Linear warmup + Cosine Annealing (epoch-level) =====
         self.scheduler_student = self._get_scheduler()
@@ -205,7 +215,10 @@ class DistillationPipeline:
         # self.teacher_head.train()  # ← Teacher head cũng train!
         total_loss = 0.0
         total_kd_loss = 0.0
+        total_logits_loss = 0.0
         total_ce_loss_s = 0.0
+        total_l1 = 0.0
+        total_l2 = 0.0
         # total_ce_loss_t = 0.0
         correct = 0
         total = 0
@@ -217,7 +230,8 @@ class DistillationPipeline:
             labels = labels.to(self.device)
             
             # ===== Teacher forward (no grad) =====
-            teacher_out = self.teacher.extract(images)
+            with torch.no_grad():
+                teacher_out = self.teacher.extract(images)
             Q_t = teacher_out["Q_t"]
             K_t = teacher_out["K_t"]
             V_t = teacher_out["V_t"]
@@ -229,12 +243,12 @@ class DistillationPipeline:
             feat_map, logit_s = self.student(images)  # [B, 1024, 14, 14], [B, num_classes]
             # ===== Teacher Head forward (để lấy teacher logits) =====
             
-            # ===== PCA Projector =====
+            # # ===== PCA Projector =====
             pca_out = self.pca_projector(feat_map, Q_t, K_t, V_t)
             PCAttn_s = pca_out["PCAttnS"]
             V_s = pca_out["VS"]
             
-            # ===== GL Projector =====
+            # # ===== GL Projector =====
             h_s_proj = self.gl_projector(feat_map)  # [B, 196, 768]
             
             # ===== Calculate losses =====
@@ -264,21 +278,21 @@ class DistillationPipeline:
             total_loss += loss_student.item()
             total_kd_loss += (l_proj1.item() + l_proj2.item())
             total_ce_loss_s += ce_loss_s.item()
-            
+            total_logits_loss += logits_kd_loss.item()
+            total_l1 += l_proj1.item()
+            total_l2 += l_proj2.item()
             _, predicted = logit_s.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
             
             # Update progress bar
             pbar.set_postfix({
-                "Loss_S": f"{loss_student.item():.4f}",
-                # "Loss_T": f"{loss_teacher.item():.4f}",
-                "KD": f"{(l_proj1.item() + l_proj2.item()):.4f}",
-                "CE": f"{ce_loss_s.item():.4f}",
-                "Acc": f"{100.*correct/total:.2f}%",
-                "LR_S": f"{self.scheduler_student.get_last_lr()[0]:.6f}",
-                # "LR_T": f"{self.scheduler_teacher.get_last_lr()[0]:.6f}"
-            })
+            "Loss_S": f"{loss_student.item():.3f}",
+            "KD": f"{(self.lambda1*l_proj1.item()+self.lambda2*l_proj2.item()+self.lambda3*logits_kd_loss.item()):.3f}",
+            "CE": f"{ce_loss_s.item():.3f}",
+            "Acc": f"{100.*correct/total:.1f}%",
+            "LR": f"{self.scheduler_student.get_last_lr()[0]:.4e}",
+        })
         
         avg_loss = total_loss / len(self.train_loader)
         avg_kd_loss = total_kd_loss / len(self.train_loader)
@@ -289,6 +303,9 @@ class DistillationPipeline:
             "loss": avg_loss,
             "kd_loss": avg_kd_loss,
             "ce_loss_s": avg_ce_loss_s,
+            "l1_weighted": (total_l1 / len(self.train_loader)) * self.lambda1,
+            "l2_weighted": (total_l2 / len(self.train_loader)) * self.lambda2,
+            "l3_weighted": (total_logits_loss / len(self.train_loader)) * self.lambda3,
             "accuracy": accuracy
         }
     
@@ -296,8 +313,8 @@ class DistillationPipeline:
     def validate(self, loader, desc="Val"):
         """Validate on given loader"""
         self.student.eval()
-        self.pca_projector.eval()
-        self.gl_projector.eval()
+        # self.pca_projector.eval()
+        # self.gl_projector.eval()
         
         total_loss = 0.0
         correct = 0
@@ -339,8 +356,8 @@ class DistillationPipeline:
         checkpoint = {
             "epoch": epoch+1,
             "student_state_dict": self.student.state_dict(),
-            "pca_projector_state_dict": self.pca_projector.state_dict(),
-            "gl_projector_state_dict": self.gl_projector.state_dict(),
+            # "pca_projector_state_dict": self.pca_projector.state_dict(),
+            # "gl_projector_state_dict": self.gl_projector.state_dict(),
             "optimizer_student_state_dict": self.optimizer_student.state_dict(),
             "scheduler_student_state_dict": self.scheduler_student.state_dict(),
             "val_loss": val_loss,
@@ -360,8 +377,8 @@ class DistillationPipeline:
         checkpoint = torch.load(path, map_location=self.device)
         
         self.student.load_state_dict(checkpoint["student_state_dict"])
-        self.pca_projector.load_state_dict(checkpoint["pca_projector_state_dict"])
-        self.gl_projector.load_state_dict(checkpoint["gl_projector_state_dict"])
+        # self.pca_projector.load_state_dict(checkpoint["pca_projector_state_dict"])
+        # self.gl_projector.load_state_dict(checkpoint["gl_projector_state_dict"])
         self.optimizer_student.load_state_dict(checkpoint["optimizer_student_state_dict"])
         self.scheduler_student.load_state_dict(checkpoint["scheduler_student_state_dict"])
         
@@ -404,12 +421,14 @@ class DistillationPipeline:
             # Print epoch summary
             print(f"\n📊 Epoch {epoch+1}/{self.epochs} Summary (LR_S: {current_lr_student:.6f}")
             print(f"   Train - Loss: {train_metrics['loss']:.4f}, "
-                  f"KD: {train_metrics['kd_loss']:.4f}, "
+                  f"KD: {train_metrics['l1_weighted']+train_metrics['l2_weighted']+train_metrics['l3_weighted']:.4f}, "
                   f"CE: {train_metrics['ce_loss_s']:.4f}, "
                   f"Acc: {train_metrics['accuracy']:.2f}%")
             print(f"   Val   - Loss: {val_metrics['loss']:.4f}, "
                   f"Acc: {val_metrics['accuracy']:.2f}%")
-            
+            print(f" L1 projection: {train_metrics['l1_weighted']:.4f}")
+            print(f" L2 projection: {train_metrics['l2_weighted']:.4f}")
+            print(f" Logits projection: {train_metrics['l3_weighted']:.4f}")
             # Save checkpoint (based on lowest val_loss)
             is_best = val_metrics["loss"] < best_val_loss
             if is_best:
@@ -453,31 +472,35 @@ class DistillationPipeline:
 if __name__ == "__main__":
     # Configuration
     config = {
-        "data_dir": r"./Burmese_dataset/working/ProcessedOriginal",
+        "data_dir": r"./Burmese-Version1",
         "num_classes": 5,
-        "batch_size": 32,
+        "batch_size": 64,
         "num_workers": 16,
         "epochs": 100 ,
         # ===== STUDENT CONFIG =====
-        "lr_student": 4e-4,
-        "warmup_epochs_student": int(0.05 * 100),  # 10 epochs
-        "start_factor_student": 0.01,
-        "eta_min_student": 1e-5,
+        "lr_student": 1e-3,
+        "warmup_epochs_student": int(0.06 * 100),  # 10 epochs
+        "start_factor_student": 0.1,
+        "eta_min_student": 1e-6,
         
         # # ===== TEACHER HEAD CONFIG (riêng biệt) =====
         # "lr_teacher": 8e-5,  # ← LR cao hơn cho teacher head
         # "warmup_epochs_teacher": int(0.01 * 100),  # 5 epochs (ngắn hơn)
         # "start_factor_teacher": 0.01,  # ← Start cao hơn
         # "eta_min_teacher": 1e-8,  # ← Min LR cao hơn
-        
+        ##### Chỉnh vị trí lấy ma trận Q,K,V và output transformer block #####
+        "block_ids":[0],
+        "block_qkv_id":11,
         # ===== COMMON =====
         "device": "cuda",
         "save_dir": "checkpoints",
-        "lambda1": 0.5,
-        "lambda2": 0.5,
+        "lambda1": 0.05,
+        "lambda2": 0.05,
         "lambda3": 0.5,
-        "patience": 15,
+        "temperature": 6.0,
+        "patience": 20,
     }
-    
+    print(f"[KD] block_ids = {config['block_ids']}")
+    print(f"[KD] block_qkv_id = {config['block_qkv_id']}")
     pipeline = DistillationPipeline(**config)
     pipeline.train()
