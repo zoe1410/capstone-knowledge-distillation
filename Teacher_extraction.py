@@ -19,7 +19,12 @@ class CustomHead(nn.Module):
         return self.classifier(x)
 
 class TeacherExtractor:
-    def __init__(self, model_name="vit_base_patch16_224", pretrained=False,checkpoint_path=None):
+    def __init__(self, 
+                 model_name="vit_base_patch16_224", 
+                 pretrained=False,
+                 checkpoint_path=None,
+                 block_ids=[11,10,9,8,7],
+                 block_qkv_id=11):
         self.model = timm.create_model(model_name, pretrained=pretrained)
         self.model.head = CustomHead()
         # Load checkpoint nếu có
@@ -31,7 +36,8 @@ class TeacherExtractor:
 
         self.model.eval()
         self.cache = {"block_outs": [], "logits": None}
-
+        self.block_ids = block_ids
+        self.block_qkv_id = block_qkv_id
         # ===== ĐÓNG BĂNG ViT =====
         for param in self.model.parameters():
             param.requires_grad = False
@@ -48,14 +54,13 @@ class TeacherExtractor:
         self.cache["logits"] = output.detach()
 
     def _register_hooks(self):
-        h_qkv = self.model.blocks[11].attn.qkv.register_forward_hook(self._hook_qkv) ## Cái này để lấy QKV từ block 11
+        h_qkv = self.model.blocks[self.block_qkv_id].attn.qkv.register_forward_hook(self._hook_qkv) ## Cái này để lấy QKV từ block 11
         self.hooks.append(h_qkv)
 
         h_logits = self.model.head.register_forward_hook(self._hook_logits) ## Cái này để lấy logits
         self.hooks.append(h_logits)
-        
-        block_ids = [7] # Lấy output từ các block này
-        for i in block_ids:
+           # Lấy output từ các block này
+        for i in self.block_ids:
             h = self.model.blocks[i].register_forward_hook(self._hook_block_multi)
             self.hooks.append(h)
 
@@ -88,7 +93,6 @@ class TeacherExtractor:
         # ===== retrieve outputs =====
         qkv_out = self.cache["qkv_out"]          # [B, 197, 2304]
         block_outs = self.cache["block_outs"]   # list length = 5
-
         # ===== split Q K V =====
         Q = qkv_out[:, :, 0:768]
         K = qkv_out[:, :, 768:1536]
@@ -99,13 +103,14 @@ class TeacherExtractor:
         V_t = V[:, 1:, :] 
 
         # [5, B, 197, 768]
-
-        #Trung bình các outputs của nhiều transformer block ( thì chạy code này ) 
-        block_stack = torch.stack(block_outs, dim=0)
-        block_mean = block_stack.mean(dim=0)    # [B,197,768]
-
-        #Lấy output của 1 transformer block (thì chạy code này)
-        block_mean = block_outs[0][:, 1:, :]
+        if len(block_outs) > 1:
+            #Trung bình các outputs của nhiều transformer block ( thì chạy code này ) 
+            block_stack = torch.stack(block_outs, dim=0)
+            block_mean = block_stack.mean(dim=0)    # [B,197,768]
+            block_mean = block_mean[:, 1:, :]
+        else:
+            #Lấy output của 1 transformer block (thì chạy code này)
+            block_mean = block_outs[0][:, 1:, :]
         
         
         # Tính attention map để bỏ vào hàm loss
