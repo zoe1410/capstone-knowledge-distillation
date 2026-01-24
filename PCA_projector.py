@@ -9,7 +9,7 @@ class PCAttentionProjector(nn.Module):
     Maps CNN feature map -> Q, K, V -> Partial Cross Attention
     """
 
-    def __init__(self, in_channels=96, embed_dim=768, p=0.5,dropout=0.3):
+    def __init__(self, in_channels=96, embed_dim=768, p=0.5,dropout=0.5):
         super().__init__()
         self.embed_dim = embed_dim
         self.p = p  # probability for partial cross replacement
@@ -18,7 +18,9 @@ class PCAttentionProjector(nn.Module):
         self.conv_q = nn.Conv2d(in_channels, embed_dim, kernel_size=3, padding=1)
         self.conv_k = nn.Conv2d(in_channels, embed_dim, kernel_size=3, padding=1)
         self.conv_v = nn.Conv2d(in_channels, embed_dim, kernel_size=3, padding=1)
-
+        self.ln_q = nn.LayerNorm(embed_dim)
+        self.ln_k = nn.LayerNorm(embed_dim)
+        self.ln_v = nn.LayerNorm(embed_dim)
     def _flatten_tokens(self, x):
         """
         [B, C, H, W] -> [B, HW, C]
@@ -61,6 +63,9 @@ class PCAttentionProjector(nn.Module):
         KS_p = self._partial_replace(KS, KT)
         VS_p = self._partial_replace(VS, VT)
 
+        QS_p = self.ln_q(QS_p)
+        KS_p = self.ln_k(KS_p)
+        VS_p = self.ln_v(VS_p)
         d = self.embed_dim
 
         attn = torch.softmax(
