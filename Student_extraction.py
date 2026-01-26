@@ -26,7 +26,7 @@ class StudentExtractor(nn.Module):
             mobilenet,
             return_nodes=return_nodes
         )
-    
+        # self.pool = nn.AvgPool2d(kernel_size=4, stride=4)
     def forward(self, x):
         """
         Forward pass để extract feature map từ layer3
@@ -38,7 +38,8 @@ class StudentExtractor(nn.Module):
             feat_map: [B, 96, 14, 14]
         """
         out = self.backbone(x)
-        feat_map = out["feat_14x14_96"]  # [B, 96, 14, 14]
+        feat_map = out["feat_14x14_96"]  # [B, 96, 56, 56]
+        # feat_map = self.pool(feat_map)
         return feat_map
     
     def train_mode(self):
