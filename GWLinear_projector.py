@@ -5,7 +5,7 @@ class GWLinearProjector(nn.Module):
     def __init__(self, in_dim=96, out_dim=768, drop_p=0.4):
         super().__init__()
 
-        # 4 shared linear layers (one per group)
+        # 4 shared linear layers (one   per group)
         self.group_fc = nn.ModuleList([
             nn.Linear(in_dim, out_dim),
             nn.Linear(in_dim, out_dim),
