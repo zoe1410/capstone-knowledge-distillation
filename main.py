@@ -13,12 +13,10 @@ from PCA_projector import PCAttentionProjector
 from GWLinear_projector import GWLinearProjector
 from loss_functions import TotalKDLoss, LogitsKDLoss
 from dataset import DatasetHandler
-torch.use_deterministic_algorithms(True)
+torch.use_deterministic_algorithms(True, warn_only=True)
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-
-
 class StudentWithHead(nn.Module):
     """
     Student model với classification head
@@ -141,14 +139,14 @@ class DistillationPipeline:
         
         # ===== Loss functions =====
         self.kd_loss_fn = TotalKDLoss()
-        self.ce_loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1,)
+        self.ce_loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
         self.logits_loss = LogitsKDLoss(temperature=temperature)
         # ===== Optimizer (chỉ train student + projectors) =====
         trainable_params = list(self.student.parameters())    + \
                           list(self.pca_projector.parameters()) + \
                           list(self.gl_projector.parameters())
         # self.optimizer_teacher = optim.Adam(self.teacher_head.parameters(), lr=lr_teacher)
-        self.optimizer_student = optim.Adam(trainable_params, lr=lr_student,weight_decay= 1e-7)
+        self.optimizer_student = optim.Adam(trainable_params, lr=lr_student)
         
         # ===== Scheduler: Linear warmup + Cosine Annealing (epoch-level) =====
         self.scheduler_student = self._get_scheduler()
@@ -240,7 +238,7 @@ class DistillationPipeline:
             logit_t = teacher_out["logits"] 
             
             # ===== Student forward =====
-            feat_map, logit_s = self.student(images)  # [B, 1024, 14, 14], [B, num_classes]
+            feat_map, logit_s = self.student(images) 
             # ===== Teacher Head forward (để lấy teacher logits) =====
             
             # # ===== PCA Projector =====
@@ -473,13 +471,13 @@ if __name__ == "__main__":
     # Configuration
     config = {
         "data_dir": r"./Burmese-Version1",
-        "num_classes": 5,
-        "batch_size": 64,
         "num_workers": 16,
+        "num_classes": 5,
+        "batch_size": 16,
         "epochs": 100 ,
         # ===== STUDENT CONFIG =====
-        "lr_student": 1e-3,
-        "warmup_epochs_student": int(0.06 * 100),  # 10 epochs
+        "lr_student": 2e-4,
+        "warmup_epochs_student": int(0.1 * 100),  # 10 epochs
         "start_factor_student": 0.1,
         "eta_min_student": 1e-6,
         
@@ -490,14 +488,14 @@ if __name__ == "__main__":
         # "eta_min_teacher": 1e-8,  # ← Min LR cao hơn
         ##### Chỉnh vị trí lấy ma trận Q,K,V và output transformer block #####
         "block_ids":[0],
-        "block_qkv_id":11,
+        "block_qkv_id":[11],
         # ===== COMMON =====
         "device": "cuda",
         "save_dir": "checkpoints",
         "lambda1": 0.05,
         "lambda2": 0.05,
         "lambda3": 0.5,
-        "temperature": 6.0,
+        "temperature": 4,
         "patience": 20,
     }
     print(f"[KD] block_ids = {config['block_ids']}")
