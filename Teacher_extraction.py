@@ -24,7 +24,7 @@ class TeacherExtractor:
                  pretrained=False,
                  checkpoint_path=None,
                  block_ids=[11,10,9,8,7],
-                 block_qkv_id=11):
+                 block_qkv_id=[11,10,9,8,7]):
         self.model = timm.create_model(model_name, pretrained=pretrained)
         self.model.head = CustomHead()
         # Load checkpoint nếu có
@@ -35,7 +35,7 @@ class TeacherExtractor:
                 self.model.load_state_dict(checkpoint['model_state_dict'],strict=True)
 
         self.model.eval()
-        self.cache = {"block_outs": [], "logits": None}
+        self.cache = {"block_outs": [], "logits": None, "qkv_outs": []}
         self.block_ids = block_ids
         self.block_qkv_id = block_qkv_id
         # ===== ĐÓNG BĂNG ViT =====
@@ -48,14 +48,15 @@ class TeacherExtractor:
     # ---- hook QKV ----
     def _hook_qkv(self, module, input, output):
         # output: [B, 197, 2304]
-        self.cache["qkv_out"] = output.detach()
+        self.cache["qkv_outs"].append(output.detach())
 
     def _hook_logits(self, module, input, output):
         self.cache["logits"] = output.detach()
 
     def _register_hooks(self):
-        h_qkv = self.model.blocks[self.block_qkv_id].attn.qkv.register_forward_hook(self._hook_qkv) ## Cái này để lấy QKV từ block 11
-        self.hooks.append(h_qkv)
+        for i in self.block_qkv_id:
+            h_qkv = self.model.blocks[i].attn.qkv.register_forward_hook(self._hook_qkv) ## Cái này để lấy QKV từ block 11
+            self.hooks.append(h_qkv)
 
         h_logits = self.model.head.register_forward_hook(self._hook_logits) ## Cái này để lấy logits
         self.hooks.append(h_logits)
@@ -82,6 +83,7 @@ class TeacherExtractor:
             dict với các key: Q_t, K_t, V_t, Attn_t, block11_out
         """
         self.cache["block_outs"].clear()
+        self.cache["qkv_outs"].clear()
         self.cache["logits"] = None
         self._register_hooks()
         
@@ -91,9 +93,14 @@ class TeacherExtractor:
         # ==== get logits =====    
         logits = self.cache["logits"]
         # ===== retrieve outputs =====
-        qkv_out = self.cache["qkv_out"]          # [B, 197, 2304]
+        qkv_out = self.cache["qkv_outs"]# [B, 197, 2304]
+        if len(qkv_out) > 1:
+            qkv_out = torch.stack(qkv_out, dim=0)
+            qkv_out = qkv_out.mean(dim=0)
+        else:
+            qkv_out = qkv_out[0]
         block_outs = self.cache["block_outs"]   # list length = 5
-        # ===== split Q K V =====
+        # # ===== split Q K V =====
         Q = qkv_out[:, :, 0:768]
         K = qkv_out[:, :, 768:1536]
         V = qkv_out[:, :, 1536:2304]
