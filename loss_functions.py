@@ -148,3 +148,65 @@ if __name__ == "__main__":
     total_loss, loss_dict = total_loss_fn(Attn_t, PCAttn_s, V_t, V_s, h_t, h_s_proj)
     print(f"\nTotal Loss: {total_loss.item():.4f}")
     print(f"Loss dict: {loss_dict}")
+
+    # Test DIST Loss
+    dist_loss_fn = DIST(beta=2.0, gamma=2.0, temperature=1.0)
+    z_s = torch.randn(B, 10) # 10 classes
+    z_t = torch.randn(B, 10)
+    dist_loss = dist_loss_fn(z_s, z_t)
+    print(f"DIST Loss: {dist_loss.item():.4f}")
+
+
+def cosine_similarity(a, b, eps=1e-8):
+    """
+    Calculates cosine similarity between two tensors.
+    """
+    return (a * b).sum(1) / (a.norm(dim=1) * b.norm(dim=1) + eps)
+
+
+def pearson_correlation(a, b, eps=1e-8):
+    """
+    Calculates Pearson correlation using cosine similarity on centered data.
+    """
+    return cosine_similarity(a - a.mean(1).unsqueeze(1), b - b.mean(1).unsqueeze(1), eps)
+
+
+def inter_class_relation(y_s, y_t):
+    """
+    Calculates Inter-class relation loss (1 - mean correlation).
+    """
+    return 1 - pearson_correlation(y_s, y_t).mean()
+
+
+def intra_class_relation(y_s, y_t):
+    """
+    Calculates Intra-class relation loss (correlation between columns).
+    """
+    return inter_class_relation(y_s.transpose(0, 1), y_t.transpose(0, 1))
+
+
+class DIST(nn.Module):
+    """
+    Distillation from A Stronger Teacher (DIST) Loss
+    """
+    def __init__(self, beta=2.0, gamma=2.0, temperature=1.0):
+        super(DIST, self).__init__()
+        self.beta = beta
+        self.gamma = gamma
+        self.temperature = temperature
+
+    def forward(self, z_s, z_t):
+        """
+        Args:
+            z_s: Student logits [B, num_classes]
+            z_t: Teacher logits [B, num_classes]
+        """
+        # Softmax with temperature (usually T=1 for DIST)
+        y_s = (z_s / self.temperature).softmax(dim=1)
+        y_t = (z_t / self.temperature).softmax(dim=1)
+
+        inter_loss = inter_class_relation(y_s, y_t)
+        intra_loss = intra_class_relation(y_s, y_t)
+
+        loss = self.beta * inter_loss + self.gamma * intra_loss
+        return loss

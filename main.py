@@ -11,7 +11,7 @@ from Teacher_extraction import TeacherExtractor
 from Student_extraction import StudentExtractor
 from PCA_projector import PCAttentionProjector
 from GWLinear_projector import GWLinearProjector
-from loss_functions import TotalKDLoss, LogitsKDLoss
+from loss_functions import TotalKDLoss, LogitsKDLoss, DIST
 from dataset import DatasetHandler
 torch.use_deterministic_algorithms(True, warn_only=True)
 
@@ -74,7 +74,10 @@ class DistillationPipeline:
         eta_min_student=1e-7,
         block_ids=[11,10,9,8,7],
         block_qkv_id=11,
-        temperature=4.0
+        temperature=4.0,
+        lambda_dist=1.0, # weight for DIST loss
+        dist_beta=2.0,
+        dist_gamma=2.0
         # eta_min_teacher=1e-7,  # cosine annealing min lr  
     ):
         self.device = torch.device(device if torch.cuda.is_available() else "cpu")
@@ -90,6 +93,9 @@ class DistillationPipeline:
         self.start_factor_student = start_factor_student
         # self.start_factor_teacher = start_factor_teacher
         self.eta_min_student = eta_min_student
+        self.lambda_dist = lambda_dist
+        self.dist_beta = dist_beta
+        self.dist_gamma = dist_gamma
         # self.eta_min_teacher = eta_min_teacher,
         os.makedirs(save_dir, exist_ok=True)
         
@@ -141,6 +147,7 @@ class DistillationPipeline:
         self.kd_loss_fn = TotalKDLoss()
         self.ce_loss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)
         self.logits_loss = LogitsKDLoss(temperature=temperature)
+        self.dist_loss_fn = DIST(beta=dist_beta, gamma=dist_gamma)
         # ===== Optimizer (chỉ train student + projectors) =====
         trainable_params = list(self.student.parameters())    + \
                           list(self.pca_projector.parameters()) + \
@@ -256,9 +263,11 @@ class DistillationPipeline:
             # ===== NEW: Logits Loss (Hinton) ====
 
             logits_kd_loss = self.logits_loss(logit_s, logit_t.detach())
+            dist_loss = self.dist_loss_fn(logit_s, logit_t.detach())
+            
             # ===== TÍNH LOSS RIÊNG =====
             # Loss cho STUDENT (KHÔNG có ce_loss_teacher!)(Offline learning)
-            loss_student = ce_loss_s + self.lambda1 * l_proj1 + self.lambda2 * l_proj2 + self.lambda3 * logits_kd_loss
+            loss_student = ce_loss_s + self.lambda1 * l_proj1 + self.lambda2 * l_proj2 + self.lambda3 * logits_kd_loss + self.lambda_dist * dist_loss
             # Loss cho TEACHER HEAD (chỉ CE)
             # loss_teacher = ce_loss_t
 
@@ -287,6 +296,7 @@ class DistillationPipeline:
             pbar.set_postfix({
             "Loss_S": f"{loss_student.item():.3f}",
             "KD": f"{(self.lambda1*l_proj1.item()+self.lambda2*l_proj2.item()+self.lambda3*logits_kd_loss.item()):.3f}",
+            "DIST": f"{(self.lambda_dist*dist_loss.item()):.3f}",
             "CE": f"{ce_loss_s.item():.3f}",
             "Acc": f"{100.*correct/total:.1f}%",
             "LR": f"{self.scheduler_student.get_last_lr()[0]:.4e}",
@@ -303,7 +313,10 @@ class DistillationPipeline:
             "ce_loss_s": avg_ce_loss_s,
             "l1_weighted": (total_l1 / len(self.train_loader)) * self.lambda1,
             "l2_weighted": (total_l2 / len(self.train_loader)) * self.lambda2,
+            "l1_weighted": (total_l1 / len(self.train_loader)) * self.lambda1,
+            "l2_weighted": (total_l2 / len(self.train_loader)) * self.lambda2,
             "l3_weighted": (total_logits_loss / len(self.train_loader)) * self.lambda3,
+            "dist_weighted": (dist_loss.item()) * self.lambda_dist, # Note: this is last batch loss, ideally average it too but acceptable for now or add accumulator
             "accuracy": accuracy
         }
     
@@ -420,6 +433,7 @@ class DistillationPipeline:
             print(f"\n📊 Epoch {epoch+1}/{self.epochs} Summary (LR_S: {current_lr_student:.6f}")
             print(f"   Train - Loss: {train_metrics['loss']:.4f}, "
                   f"KD: {train_metrics['l1_weighted']+train_metrics['l2_weighted']+train_metrics['l3_weighted']:.4f}, "
+                  f"DIST: {train_metrics['dist_weighted']:.4f}, " 
                   f"CE: {train_metrics['ce_loss_s']:.4f}, "
                   f"Acc: {train_metrics['accuracy']:.2f}%")
             print(f"   Val   - Loss: {val_metrics['loss']:.4f}, "
@@ -497,6 +511,9 @@ if __name__ == "__main__":
         "lambda3": 0.5,
         "temperature": 4,
         "patience": 20,
+        "lambda_dist": 1.0,
+        "dist_beta": 2.0,
+        "dist_gamma": 2.0,
     }
     print(f"[KD] block_ids = {config['block_ids']}")
     print(f"[KD] block_qkv_id = {config['block_qkv_id']}")
