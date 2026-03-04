@@ -1,7 +1,7 @@
 {
     "run_number": 1,
-    "timestamp": "20251127_171342",
-    "dataset_path": "C:\\Users\\Administrator\\Downloads\\Tomato Leaf Disease Dataset\\TomatoDataset",
+    "timestamp": "20260304_145434",
+    "dataset_path": "./TomatoDataset",
     "num_classes": 10,
     "class_names": [
         "Tomato___Bacterial_spot",
@@ -19,26 +19,16 @@
     "val_samples": 237,
     "test_samples": 250,
     "models_trained": [
-        "vgg16",
-        "resnet18",
-        "resnet101",
-        "mobilenet_v2",
-        "densenet121",
-        "efficientnet_b0",
-        "convnext_tiny",
-        "vit_base_patch16_224",
-        "swin_tiny_patch4_window7_224",
-        "convit_tiny"
+        "mobilenet_v2"
     ],
     "config": {
         "batch_size": 32,
-        "num_epochs": 200,
-        "learning_rate": 0.0005,
+        "num_epochs": 150,
+        "learning_rate": 0.00015,
         "early_stopping_patience": 15,
         "classifier_config": [
-            256,
-            128
+            512
         ],
-        "dropout_rate": 0.5
+        "dropout_rate": 0.4
     }
 }
