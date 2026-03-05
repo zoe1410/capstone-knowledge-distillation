@@ -16,7 +16,7 @@ from dataset import DatasetHandler
 torch.use_deterministic_algorithms(True, warn_only=True)
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 class StudentWithHead(nn.Module):
     """
     Student model với classification head
@@ -67,7 +67,8 @@ class DistillationPipeline:
         save_dir="checkpoints",
         lambda1=1.0,  # weight for L_proj1 (PCA loss)
         lambda2=1.0,  # weight for L_proj2 (GL loss)
-        lambda3=1.0,  # weight for L_logits (Hinton loss)
+        lambda3=1.0,
+        lambda4=1.0,  # weight for L_logits (Hinton loss)
         patience=15,  # early stopping patience
         start_factor_student=1e-8,
         # start_factor_teacher=1e-8,  # warmup start factor
@@ -87,6 +88,7 @@ class DistillationPipeline:
         self.lambda1 = lambda1
         self.lambda2 = lambda2
         self.lambda3 = lambda3
+        self.lambda4 = lambda4
         self.temperature = temperature
         self.patience = patience
         self.start_factor_student = start_factor_student
@@ -116,7 +118,7 @@ class DistillationPipeline:
         
         # Teacher (frozen, inference only)
         self.teacher = TeacherExtractor(pretrained=False,
-                                        checkpoint_path=r"./Capstone_KD-Burmese/results/ViT-88.46/vit_base_patch16_224/saved_checkpoints/strategy2_top_3_averaged.pth",
+                                        checkpoint_path=r"/Capstone_KD-feature-dist-kd (1)/strategy2_top_4_averaged.pth",
                                         block_ids=block_ids,
                                         block_qkv_id=block_qkv_id)
         self.teacher.to(self.device)
@@ -222,6 +224,7 @@ class DistillationPipeline:
         total_ce_loss_s = 0.0
         total_l1 = 0.0
         total_l2 = 0.0
+        total_dist_loss = 0.0
         # total_ce_loss_t = 0.0
         correct = 0
         total = 0
@@ -265,7 +268,7 @@ class DistillationPipeline:
             
             # ===== TÍNH LOSS RIÊNG =====
             # Loss cho STUDENT (KHÔNG có ce_loss_teacher!)(Offline learning)
-            loss_student = ce_loss_s + self.lambda1 * l_proj1 + self.lambda2 * l_proj2 + self.lambda3 * logits_kd_loss + dist_loss
+            loss_student = ce_loss_s + self.lambda1 * l_proj1 + self.lambda2 * l_proj2 + self.lambda3 * logits_kd_loss + self.lambda4*dist_loss
             # Loss cho TEACHER HEAD (chỉ CE)
             # loss_teacher = ce_loss_t
 
@@ -284,6 +287,7 @@ class DistillationPipeline:
             total_kd_loss += (l_proj1.item() + l_proj2.item())
             total_ce_loss_s += ce_loss_s.item()
             total_logits_loss += logits_kd_loss.item()
+            total_dist_loss += dist_loss.item()
             total_l1 += l_proj1.item()
             total_l2 += l_proj2.item()
             _, predicted = logit_s.max(1)
@@ -314,7 +318,7 @@ class DistillationPipeline:
             "l1_weighted": (total_l1 / len(self.train_loader)) * self.lambda1,
             "l2_weighted": (total_l2 / len(self.train_loader)) * self.lambda2,
             "l3_weighted": (total_logits_loss / len(self.train_loader)) * self.lambda3,
-            "dist_weighted": (dist_loss.item()), # Note: this is last batch loss, ideally average it too but acceptable for now or add accumulator
+            "dist_weighted": (total_dist_loss / len(self.train_loader)) * self.lambda4, # Note: this is last batch loss, ideally average it too but acceptable for now or add accumulator
             "accuracy": accuracy
         }
     
@@ -482,7 +486,7 @@ class DistillationPipeline:
 if __name__ == "__main__":
     # Configuration
     config = {
-        "data_dir": r"./Burmese-Version1",
+        "data_dir": r"/Capstone_KD-feature-dist-kd (1)/kaggle/working/ProcessedOriginal",
         "num_workers": 16,
         "num_classes": 5,
         "batch_size": 16,
@@ -507,6 +511,7 @@ if __name__ == "__main__":
         "lambda1": 0.05,
         "lambda2": 0.05,
         "lambda3": 0.5,
+        "lambda4": 0.5,
         "temperature": 4,
         "patience": 20,
         "dist_beta": 2.0,
