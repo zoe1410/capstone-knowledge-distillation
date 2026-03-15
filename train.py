@@ -17,6 +17,7 @@ except ImportError:
     WANDB_AVAILABLE = False
     print("⚠ wandb not installed. Run: pip install wandb")
 
+
 from config import Config
 from models import get_model
 from losses import PolyFocalLoss, compute_class_weights
@@ -347,7 +348,7 @@ def train_model(model_name, train_loader, val_loader, num_classes, device, class
         # print(f"  Class weights: {class_weights.cpu().tolist()}")
         criterion = nn.CrossEntropyLoss()
         print(f"  Loss: CrossEntropyLoss (weighted)")
-    optimizer = optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), 
+    optimizer = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), 
                           lr=Config.LEARNING_RATE,
                           weight_decay=Config.WEIGHT_DECAY)  # L2 regularization
     
