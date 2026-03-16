@@ -62,6 +62,7 @@ class CheckpointManager:
         self.best_epoch = 0
         self.keep_last_n = keep_last_n  # Keep last N epochs
         self.keep_top_k = keep_top_k    # Keep top K best checkpoints
+        self.early_stop_epoch = None    # Epoch at which early stopping was triggered
     
     def save_checkpoint(self, model, optimizer, epoch, val_loss, is_best=False):
         """Save checkpoint and manage storage efficiently"""
@@ -150,6 +151,19 @@ class CheckpointManager:
         if not self.checkpoints:
             return []
         sorted_by_epoch = sorted(self.checkpoints, key=lambda x: x[0])
+        return sorted_by_epoch[-n:]
+
+    def get_n_checkpoints_before_early_stop(self, n):
+        """Get N checkpoints ending at the early stopping epoch (Strategy 4).
+        If early_stop_epoch is None (training completed normally), falls back to last N."""
+        if not self.checkpoints:
+            return []
+        sorted_by_epoch = sorted(self.checkpoints, key=lambda x: x[0])
+        if self.early_stop_epoch is not None:
+            # Keep only checkpoints up to and including early_stop_epoch
+            filtered = [cp for cp in sorted_by_epoch if cp[0] <= self.early_stop_epoch]
+            return filtered[-n:] if filtered else []
+        # Fallback: same as get_last_n_checkpoints
         return sorted_by_epoch[-n:]
     
     def save_checkpoint_info(self):
@@ -452,6 +466,7 @@ def train_model(model_name, train_loader, val_loader, num_classes, device, class
         early_stopping(val_loss)
         if early_stopping.early_stop:
             print(f"\n✓ Early stopping triggered at epoch {epoch}")
+            checkpoint_manager.early_stop_epoch = epoch
             break
     
     # Save checkpoint info

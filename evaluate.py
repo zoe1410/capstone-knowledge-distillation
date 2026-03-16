@@ -454,9 +454,70 @@ def strategy_3_last_n_average(model_name, checkpoint_manager, test_loader, train
     return result
 
 
+def strategy_4_early_stop_n_average(model_name, checkpoint_manager, test_loader, train_loader, num_classes, device, class_names=None, save_dir=None):
+    """
+    Strategy 4: Average N checkpoints ending at the early stopping epoch.
+    Similar to Strategy 3 but anchored at the early stopping epoch instead of the
+    absolute last checkpoint. E.g. if early stopping fired at epoch 40 and N=10,
+    this averages epochs 31-40.
+    Falls back to last N checkpoints if early stopping was not triggered.
+
+    Returns:
+        result: Dictionary with 'metrics', 'per_class', 'confusion_matrix'
+    """
+
+    early_stop_epoch = checkpoint_manager.early_stop_epoch
+    if early_stop_epoch is not None:
+        print(f"\n  Strategy 4: Last {Config.LAST_N_EPOCHS} epochs ending at early-stop epoch {early_stop_epoch}")
+    else:
+        print(f"\n  Strategy 4: Last {Config.LAST_N_EPOCHS} epochs ending at early-stop epoch (no early stop, using last {Config.LAST_N_EPOCHS})")
+
+    # Get N checkpoints ending at the early stopping epoch
+    last_n = checkpoint_manager.get_n_checkpoints_before_early_stop(Config.LAST_N_EPOCHS)
+
+    if len(last_n) < Config.LAST_N_EPOCHS:
+        print(f"    Warning: Only {len(last_n)} checkpoints available")
+
+    checkpoint_paths = [path for _, _, path in last_n]
+    epochs = [epoch for epoch, _, _ in last_n]
+    print(f"    Averaging epochs: {epochs}")
+
+    # Average weights
+    averaged_weights = average_weights(checkpoint_paths, device)
+
+    # Load model with averaged weights
+    model = get_model(model_name, num_classes, freeze_backbone=False)
+    model.load_state_dict(averaged_weights, strict=True)
+    model = model.to(device)
+
+    # CRITICAL: Update BatchNorm statistics with training data
+    print(f"    Updating BatchNorm statistics...")
+    update_bn(model, train_loader, device, num_batches=100)
+
+    # Evaluate
+    result = evaluate_model(model, test_loader, device, num_classes, class_names)
+
+    # Save strategy checkpoint to results folder
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f'Strategy_4_early_stop_N{Config.LAST_N_EPOCHS}.pth')
+        torch.save({
+            'model_state_dict': model.state_dict(),
+            'strategy': 'Strategy 4',
+            'early_stop_epoch': early_stop_epoch,
+            'epochs_averaged': epochs
+        }, save_path)
+        print(f"    ✓ Strategy checkpoint saved: {save_path}")
+
+    # Hiển thị chi tiết kết quả
+    _print_eval_results(result['metrics'], result['per_class'], prefix="    ", header="TEST RESULTS - Strategy 4")
+
+    return result
+
+
 def evaluate_all_strategies(model_name, checkpoint_manager, test_loader, train_loader, num_classes, device, class_names=None, save_dir=None):
     """
-    Evaluate all 3 strategies for a model
+    Evaluate all 4 strategies for a model
 
     Args:
         model_name: Model name
@@ -493,6 +554,11 @@ def evaluate_all_strategies(model_name, checkpoint_manager, test_loader, train_l
 
     # Strategy 3: Last N epochs averaging (with BN update - MOST CRITICAL)
     all_results['Strategy 3'] = strategy_3_last_n_average(
+        model_name, checkpoint_manager, test_loader, train_loader, num_classes, device, class_names, save_dir=save_dir
+    )
+
+    # Strategy 4: N epochs ending at early-stop epoch averaging (with BN update)
+    all_results['Strategy 4'] = strategy_4_early_stop_n_average(
         model_name, checkpoint_manager, test_loader, train_loader, num_classes, device, class_names, save_dir=save_dir
     )
 
