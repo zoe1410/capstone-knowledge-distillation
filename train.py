@@ -153,18 +153,15 @@ class CheckpointManager:
         sorted_by_epoch = sorted(self.checkpoints, key=lambda x: x[0])
         return sorted_by_epoch[-n:]
 
-    def get_n_checkpoints_before_early_stop(self, n):
-        """Get N checkpoints ending at the early stopping epoch (Strategy 4).
-        If early_stop_epoch is None (training completed normally), falls back to last N."""
+    def get_n_checkpoints_before_best_epoch(self, n):
+        """Get N checkpoints ending at the BEST epoch (Strategy 4)."""
         if not self.checkpoints:
             return []
         sorted_by_epoch = sorted(self.checkpoints, key=lambda x: x[0])
-        if self.early_stop_epoch is not None:
-            # Keep only checkpoints up to and including early_stop_epoch
-            filtered = [cp for cp in sorted_by_epoch if cp[0] <= self.early_stop_epoch]
-            return filtered[-n:] if filtered else []
-        # Fallback: same as get_last_n_checkpoints
-        return sorted_by_epoch[-n:]
+        
+        # Use best_epoch as the anchor
+        filtered = [cp for cp in sorted_by_epoch if cp[0] <= self.best_epoch]
+        return filtered[-n:] if filtered else []
     
     def save_checkpoint_info(self):
         """Save checkpoint information to JSON"""
