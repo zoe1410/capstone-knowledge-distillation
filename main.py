@@ -7,7 +7,7 @@ import shutil
 # Force CPU mode if GPU has memory issues
 # os.environ['CUDA_VISIBLE_DEVICES'] = ''  # Uncomment this line to force CPU mode
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 import torch
 import json
 import pandas as pd
@@ -137,7 +137,7 @@ def main():
     2. Load and split dataset
     3. FOR EACH MODEL:
        - Train model
-       - Evaluate with 4 strategies
+       - Evaluate with 3 strategies
        - Save individual results
        - Delete checkpoints
     4. Combine all results to Excel
@@ -244,7 +244,7 @@ def main():
             print(f"  ✓ Training completed for {model_name}")
             
             # 3.2: Evaluate with 3 strategies
-            print(f"\n  [3.2] Evaluating {model_name} with 4 strategies...")
+            print(f"\n  [3.2] Evaluating {model_name} with 3 strategies...")
             # Tạo folder lưu checkpoint cho các strategy
             strategy_checkpoint_dir = os.path.join(run_folder, model_name, 'checkpoints')
             results = evaluate_all_strategies(
