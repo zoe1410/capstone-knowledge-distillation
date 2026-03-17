@@ -81,8 +81,11 @@ def plot_training_history(history, model_name, save_path=None):
     """
     epochs = range(1, len(history['train_loss']) + 1)
     
-    # Create figure with 2 subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    # Determine number of subplots based on whether lr data is available
+    has_lr = 'learning_rate' in history and len(history['learning_rate']) > 0
+    ncols = 3 if has_lr else 2
+    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 4))
+    ax1, ax2 = axes[0], axes[1]
     
     # Plot Loss
     ax1.plot(epochs, history['train_loss'], 'b-', label='training', linewidth=2)
@@ -101,6 +104,16 @@ def plot_training_history(history, model_name, save_path=None):
     ax2.set_title('Model Accuracy', fontsize=14, fontweight='bold')
     ax2.legend(loc='lower right', fontsize=10)
     ax2.grid(True, alpha=0.3)
+    
+    # Plot Learning Rate
+    if has_lr:
+        ax3 = axes[2]
+        ax3.plot(epochs, history['learning_rate'], color='green', linewidth=2)
+        ax3.set_xlabel('Epoch', fontsize=12)
+        ax3.set_ylabel('Learning Rate', fontsize=12)
+        ax3.set_title('Learning Rate Curve', fontsize=14, fontweight='bold')
+        ax3.set_yscale('log')
+        ax3.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -136,8 +149,11 @@ def plot_patience_period(history, patience, model_name, save_path=None):
     train_acc = history['train_acc'][start_epoch:]
     val_acc = history['val_acc'][start_epoch:]
     
-    # Create figure with 2 subplots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+    # Determine number of subplots based on whether lr data is available
+    has_lr = 'learning_rate' in history and len(history['learning_rate']) > start_epoch
+    ncols = 3 if has_lr else 2
+    fig, axes = plt.subplots(1, ncols, figsize=(6 * ncols, 4))
+    ax1, ax2 = axes[0], axes[1]
     
     # Plot Loss
     ax1.plot(epochs, train_loss, 'b-', label='training', linewidth=2, marker='o')
@@ -158,6 +174,18 @@ def plot_patience_period(history, patience, model_name, save_path=None):
                  fontsize=14, fontweight='bold')
     ax2.legend(loc='lower right', fontsize=10)
     ax2.grid(True, alpha=0.3)
+    
+    # Plot Learning Rate
+    if has_lr:
+        lr_values = history['learning_rate'][start_epoch:]
+        ax3 = axes[2]
+        ax3.plot(epochs, lr_values, color='green', linewidth=2, marker='o')
+        ax3.set_xlabel('Epoch', fontsize=12)
+        ax3.set_ylabel('Learning Rate', fontsize=12)
+        ax3.set_title(f'Learning Rate Curve (Last {len(epochs)} Epochs - Patience Period)',
+                     fontsize=14, fontweight='bold')
+        ax3.set_yscale('log')
+        ax3.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
