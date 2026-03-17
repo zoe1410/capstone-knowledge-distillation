@@ -4,6 +4,7 @@ Visualization utilities for training analysis
 import os
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import random
 from PIL import Image
 
@@ -113,7 +114,11 @@ def plot_training_history(history, model_name, save_path=None):
         ax3.set_ylabel('Learning Rate', fontsize=12)
         ax3.set_title('Learning Rate Curve', fontsize=14, fontweight='bold')
         ax3.set_yscale('log')
-        ax3.grid(True, alpha=0.3)
+        ax3.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        ax3.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2e'))
+        ax3.yaxis.set_minor_formatter(ticker.FormatStrFormatter('%.2e'))
+        ax3.tick_params(axis='y', which='both', labelsize=8)
+        ax3.grid(True, alpha=0.3, which='both')
     
     plt.tight_layout()
     
@@ -185,7 +190,11 @@ def plot_patience_period(history, patience, model_name, save_path=None):
         ax3.set_title(f'Learning Rate Curve (Last {len(epochs)} Epochs - Patience Period)',
                      fontsize=14, fontweight='bold')
         ax3.set_yscale('log')
-        ax3.grid(True, alpha=0.3)
+        ax3.xaxis.set_major_locator(ticker.MaxNLocator(integer=True))
+        ax3.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2e'))
+        ax3.yaxis.set_minor_formatter(ticker.FormatStrFormatter('%.2e'))
+        ax3.tick_params(axis='y', which='both', labelsize=8)
+        ax3.grid(True, alpha=0.3, which='both')
     
     plt.tight_layout()
     
