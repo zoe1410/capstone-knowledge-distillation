@@ -3,37 +3,39 @@ import timm
 import torch.nn.functional as F
 import math
 import torch.nn as nn
-class CustomHead(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.classifier = nn.Sequential(
-            nn.Linear(768, 256),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.GELU(),
-            nn.Dropout(0.3),
-            nn.Linear(128, 5),
-        )
-    def forward(self, x):
-        return self.classifier(x)
-
 # class CustomHead(nn.Module):
 #     def __init__(self):
 #         super().__init__()
-#         prev_dim = 768
-#         hidden_dim = 512
-
 #         self.classifier = nn.Sequential(
-#             nn.LayerNorm(prev_dim),
-#             nn.Linear(prev_dim, hidden_dim),
+#             nn.LayerNorm(768),
+#             nn.Linear(768, 256),
 #             nn.GELU(),
-#             nn.Dropout(0.4),
-#             nn.Linear(hidden_dim, 10)
+#             nn.Dropout(0.3),
+#             nn.LayerNorm(256),
+#             nn.Linear(256, 128),
+#             nn.GELU(),
+#             nn.Dropout(0.3),
+#             nn.Linear(128, 5),
 #         )
-
 #     def forward(self, x):
 #         return self.classifier(x)
+
+class CustomHead(nn.Module):
+    def __init__(self):
+        super().__init__()
+        prev_dim = 768
+        hidden_dim = 512
+
+        self.classifier = nn.Sequential(
+            nn.LayerNorm(prev_dim),
+            nn.Linear(prev_dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(0.4),
+            nn.Linear(hidden_dim, 10)
+        )
+
+    def forward(self, x):
+        return self.classifier(x)
 class TeacherExtractor:
     def __init__(self, 
                  model_name="vit_base_patch16_224", 

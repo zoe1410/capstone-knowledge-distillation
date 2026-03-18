@@ -6,7 +6,7 @@ Modify all hyperparameters here instead of editing main.py directly.
 
 class Config:
     # ===================== Dataset =====================
-    DATA_DIR = r"/Capstone_KD_Testing_Ver1/kaggle/working/ProcessedOriginal"
+    DATA_DIR = r"./AgriKD Dataset/TomatoDataset"
     NUM_CLASSES = 5
     IMAGE_SIZE = 224
     BATCH_SIZE = 256
@@ -20,11 +20,11 @@ class Config:
 
     # ===================== Device =====================
     DEVICE = "cuda"
-    CUDA_VISIBLE_DEVICES = "0"
+    CUDA_VISIBLE_DEVICES = "1"
 
     # ===================== Teacher =====================
     TEACHER_CHECKPOINT = (
-        r"/strategy2_top_4_averaged.pth"
+        r"./AgriKD Teacher Checkpoint/Strategy_3_last_10_Tomato.pth"
     )
     # Transformer block indices for extracting features / QKV
     BLOCK_IDS = [0]
@@ -47,8 +47,8 @@ class Config:
     GW_DROP_P = 0.4                   # dropout in group-wise linear projector
 
     # ===================== Training =====================
-    EPOCHS = 150
-    LR_STUDENT = 5e-3
+    EPOCHS = 100
+    LR_STUDENT = 4e-3
 
     # Warmup + Cosine Annealing scheduler
     WARMUP_EPOCHS_STUDENT = int(0.1 * EPOCHS)   # 15% of total epochs
@@ -59,10 +59,10 @@ class Config:
     PATIENCE = 30
 
     # ===================== Loss Weights =====================
-    LAMBDA1 = 0.05          # L_proj1  (PCA attention loss)
-    LAMBDA2 = 0.05          # L_proj2  (GW linear loss)
+    LAMBDA1 = 0.4          # L_proj1  (PCA attention loss)
+    LAMBDA2 = 0.4          # L_proj2  (GW linear loss)
     LAMBDA3 = 0.5           # L_logits (Hinton KD loss)
-    LAMBDA4 = 0.75         # L_dist   (DIST loss)
+    LAMBDA4 = 0.7         # L_dist   (DIST loss)
 
     LABEL_SMOOTHING = 0.1   # CrossEntropyLoss label smoothing
 
