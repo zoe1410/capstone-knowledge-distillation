@@ -53,6 +53,28 @@ class StudentExtractor(nn.Module):
         return self
 
 
+class StudentWithHead(nn.Module):
+    def __init__(self, num_classes, pretrained=True, *, hidden_sizes=(512, 256)):
+        super().__init__()
+        first, second = hidden_sizes
+        self.backbone = StudentExtractor(pretrained=pretrained)
+        self.gap = nn.AdaptiveAvgPool2d(1)
+        self.classifier = nn.Sequential(
+            nn.Linear(96, first),
+            nn.ReLU(),
+            nn.Dropout(0.7),
+            nn.Linear(first, second),
+            nn.ReLU(),
+            nn.Dropout(0.7),
+            nn.Linear(second, num_classes),
+        )
+
+    def forward(self, x):
+        feature_map = self.backbone(x)
+        logits = self.classifier(self.gap(feature_map).flatten(1))
+        return feature_map, logits
+
+
 # ===== Test =====
 if __name__ == "__main__":
     student = StudentExtractor()

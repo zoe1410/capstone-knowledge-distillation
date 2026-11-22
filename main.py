@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 # Import các module đã tạo
 from Teacher_extraction import TeacherExtractor
-from Student_extraction import StudentExtractor
+from Student_extraction import StudentWithHead
 from PCA_projector import PCAttentionProjector
 from GWLinear_projector import GWLinearProjector
 from loss_functions import TotalKDLoss, LogitsKDLoss, DIST
@@ -17,40 +17,8 @@ torch.use_deterministic_algorithms(True, warn_only=True)
 
 os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-class StudentWithHead(nn.Module):
-    """
-    Student model với classification head
-    """
-    def __init__(self, num_classes, pretrained=True):
-        super().__init__()
-        self.backbone = StudentExtractor(pretrained=pretrained)
-        
-        # Classification head: Global Average Pooling + MLP (1024 -> 256 -> 128 -> num_classes)
-        self.gap = nn.AdaptiveAvgPool2d(1)
-        self.classifier = nn.Sequential(
-            nn.Linear(96, 512),
-            nn.ReLU(),
-            nn.Dropout(0.7),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Dropout(0.7),
-            nn.Linear(256, num_classes)
-        )
-    
-    def forward(self, x):
-        """
-        Returns:
-            feat_map: [B, 1024, 14, 14] - for distillation
-            logits: [B, num_classes] - for classification
-        """
-        feat_map = self.backbone(x)  # [B, 1024, 14, 14]
-        
-        # Classification
-        pooled = self.gap(feat_map)  # [B, 1024, 1, 1]
-        pooled = pooled.flatten(1)   # [B, 1024]
-        logits = self.classifier(pooled)  # [B, num_classes]
-        
-        return feat_map, logits
+
+
 class DistillationPipeline:
     def __init__(
         self,
@@ -127,7 +95,7 @@ class DistillationPipeline:
         # Student with classification head
         self.student = StudentWithHead(num_classes=num_classes, pretrained=True)
         self.student = self.student.to(self.device)
-        print("✅ Student (ResNet-50) loaded")
+        print("✅ Student (MobileNetV2) loaded")
         
         # # Teacher Head (trainable)
         # self.teacher_head = TeacherHead(num_classes=num_classes, embed_dim=768)
